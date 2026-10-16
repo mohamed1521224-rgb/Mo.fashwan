@@ -48,7 +48,7 @@ public class AdsManager {
         }
         started = true;
         if (AppConfig.CONSENT_ENABLED) {
-            final ConsentInformation info = ConsentInformation.getInstance(activity);
+            final ConsentInformation info = UserMessagingPlatform.getConsentInformation(activity);
             ConsentRequestParameters params = new ConsentRequestParameters.Builder().build();
             info.requestConsentInfoUpdate(activity, params,
                     () -> UserMessagingPlatform.loadAndShowConsentFormIfRequired(activity, formError -> initSdk()),

@@ -15,6 +15,8 @@ import android.net.NetworkCapabilities;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
 import android.view.View;
 import android.view.ViewGroup;
@@ -51,6 +53,8 @@ public class MainActivity extends AppCompatActivity {
     private boolean pageLoaded = false;
     private boolean offlineShown = false;
     private long splashStart = 0;
+    private RemoteConfig remoteConfig;
+    private final Handler syncHandler = new Handler(Looper.getMainLooper());
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override
@@ -90,7 +94,9 @@ public class MainActivity extends AppCompatActivity {
             });
         }
 
-        webView.loadUrl(AppConfig.START_URL);
+        remoteConfig = new RemoteConfig(this);
+        startPeriodicSync();
+        webView.loadUrl(remoteConfig.startUrl);
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
@@ -147,7 +153,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
                 // النافذة الجديدة تُفتح في نفس الـ WebView بدل الخروج للمتصفح
-                View target = view;
+                WebView target = view;
                 WebView popup = new WebView(MainActivity.this);
                 popup.getSettings().setJavaScriptEnabled(true);
                 popup.setWebViewClient(new WebViewClient() {
@@ -190,8 +196,8 @@ public class MainActivity extends AppCompatActivity {
                 if (AppConfig.SPLASH_WAIT_FOR_LOAD && !splashDone) {
                     hideSplash();
                 }
-                if (!AppConfig.JS_CODE.isEmpty()) {
-                    view.evaluateJavascript(AppConfig.JS_CODE, null);
+                if (remoteConfig != null && !remoteConfig.jsCode.isEmpty()) {
+                    view.evaluateJavascript(remoteConfig.jsCode, null);
                 }
             }
 
@@ -415,6 +421,27 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void startPeriodicSync() {
+        if (AppConfig.SYNC_URL == null || AppConfig.SYNC_URL.trim().isEmpty()
+                || AppConfig.SYNC_INTERVAL_HOURS <= 0) {
+            return;
+        }
+        long intervalMs = AppConfig.SYNC_INTERVAL_HOURS * 3600_000L;
+        syncHandler.postDelayed(this::doSync, intervalMs);
+    }
+
+    private void doSync() {
+        if (remoteConfig == null) {
+            return;
+        }
+        remoteConfig.sync(changed -> {
+            if (changed && webView != null) {
+                runOnUiThread(() -> webView.loadUrl(remoteConfig.startUrl));
+            }
+            startPeriodicSync();
+        });
+    }
+
     @Override
     protected void onPause() {
         if (webView != null) {
@@ -426,6 +453,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        doSync();
         if (webView != null) {
             webView.onResume();
         }
