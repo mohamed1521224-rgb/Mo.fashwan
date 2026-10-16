@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">زعيم الملاعب</string>
+    <string name="offline_title">لا يوجد اتصال بالإنترنت</string>
+    <string name="offline_hint">تحقّق من الشبكة ثم أعد المحاولة</string>
+    <string name="offline_retry">إعادة المحاولة</string>
+</resources>
