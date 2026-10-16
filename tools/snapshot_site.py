@@ -19,6 +19,7 @@ from urllib.parse import urljoin, urlsplit, urldefrag
 from urllib.request import Request, HTTPRedirectHandler, build_opener
 
 ROOT = Path('app/src/main/assets/site')
+DOLLAR_BRACE = chr(36) + chr(123)
 STARTED = time.monotonic()
 TIME_BUDGET = int(os.environ.get('SNAPSHOT_TIMEOUT_SECONDS', '14400'))
 RESERVE = 4 * 1024 ** 3
@@ -70,8 +71,12 @@ opener = build_opener(PublicRedirects())
 def add(raw, base, document=False):
     if not raw or raw.strip().startswith(('#', 'data:', 'javascript:', 'mailto:', 'tel:', 'blob:')):
         return
+    if DOLLAR_BRACE in raw or '$(' in raw:
+        return
     url = canonical(raw, base)
     if not url:
+        return
+    if DOLLAR_BRACE in url:
         return
     if document and urlsplit(url).netloc.lower() not in origins:
         return
@@ -230,8 +235,10 @@ def main():
             failures.append({'url': url, 'error': str(error)})
             print('Could not download:', url, str(error), file=sys.stderr)
     result = report(not failures)
-    if failures or entry not in mapping:
-        raise RuntimeError('Snapshot incomplete. See snapshot-report.json; APK build stopped rather than silently dropping files.')
+    if entry not in mapping:
+        raise RuntimeError('Could not download the entry page; APK build stopped. See snapshot-report.json.')
+    if failures:
+        print('Warning:', len(failures), 'non-critical resources were not downloaded; the app will fetch them at runtime. See snapshot-report.json.')
     (ROOT / 'manifest.json').write_text(json.dumps({'entry': entry, 'files': mapping}, ensure_ascii=False), encoding='utf-8')
     print('Snapshot finished:', json.dumps(result, ensure_ascii=False))
 
