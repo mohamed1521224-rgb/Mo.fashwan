@@ -16,13 +16,13 @@
             android:layout_height="match_parent" />
     </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
-    <!-- البانر طبقة عائمة فوق المحتوى (لا يأخذ مساحة من الصفحة)، والموقع هو من يحدد إظهاره ومكانه -->
+    <!-- البانر طبقة عائمة أصغر فوق المحتوى (320×50)، متوسط أفقيًا، والموقع هو من يحدد إظهاره ومكانه -->
     <FrameLayout
         android:id="@+id/ad_container"
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:elevation="8dp"
-        android:layout_gravity="bottom" />
+        android:layout_gravity="bottom|center_horizontal" />
 
     <Button
         android:id="@+id/rewarded_button"

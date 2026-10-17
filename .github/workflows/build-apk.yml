@@ -12,17 +12,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download public website resources for offline use
-        run: python3 tools/snapshot_site.py
-
-      - name: Save offline download report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: offline-download-report
-          path: snapshot-report.json
-          if-no-files-found: ignore
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

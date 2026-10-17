@@ -8,7 +8,10 @@ public final class AppConfig {
     public static final boolean IMMERSIVE = true;
     public static final boolean PULL_TO_REFRESH = false;
     public static final String REFRESH_COLOR = "#7C4DFF";
-    public static final boolean OFFLINE_MODE = true;
+    public static final String BACKGROUND_COLOR = "#000000";
+    public static final String OFFLINE_STRATEGY = "cache";
+    public static final boolean OFFLINE_MODE = false;
+    public static final boolean CACHE_ENABLED = true;
     public static final boolean CLEARTEXT = true;
     public static final boolean EXTERNAL_LINKS = false;
 

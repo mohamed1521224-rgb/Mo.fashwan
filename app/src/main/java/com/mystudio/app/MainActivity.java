@@ -52,6 +52,8 @@ public class MainActivity extends AppCompatActivity {
     private boolean splashDone = false;
     private boolean pageLoaded = false;
     private boolean offlineShown = false;
+    private boolean adWasShown = false;
+    private String currentUrl = null;
     private long splashStart = 0;
     private RemoteConfig remoteConfig;
     private final Handler syncHandler = new Handler(Looper.getMainLooper());
@@ -73,6 +75,11 @@ public class MainActivity extends AppCompatActivity {
         }
 
         webView = findViewById(R.id.webview);
+        try {
+            webView.setBackgroundColor(Color.parseColor(AppConfig.BACKGROUND_COLOR));
+        } catch (Exception ignored) {
+            webView.setBackgroundColor(Color.BLACK);
+        }
         swipe = findViewById(R.id.swipe);
         swipe.setColorSchemeColors(Color.parseColor(AppConfig.REFRESH_COLOR));
         swipe.setEnabled(AppConfig.PULL_TO_REFRESH);
@@ -125,7 +132,11 @@ public class MainActivity extends AppCompatActivity {
         s.setJavaScriptCanOpenWindowsAutomatically(true);
         s.setAllowFileAccess(true);
         s.setAllowContentAccess(true);
-        s.setCacheMode(AppConfig.OFFLINE_MODE ? WebSettings.LOAD_DEFAULT : WebSettings.LOAD_NO_CACHE);
+        s.setCacheMode(AppConfig.CACHE_ENABLED ? WebSettings.LOAD_DEFAULT : WebSettings.LOAD_NO_CACHE);
+        s.setAppCacheEnabled(AppConfig.CACHE_ENABLED);
+        if (AppConfig.CACHE_ENABLED) {
+            s.setAppCachePath(getCacheDir().getAbsolutePath());
+        }
         s.setMixedContentMode(AppConfig.CLEARTEXT
                 ? WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 : WebSettings.MIXED_CONTENT_NEVER_ALLOW);
@@ -192,6 +203,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 pageLoaded = true;
+                currentUrl = url;
                 swipe.setRefreshing(false);
                 if (AppConfig.SPLASH_WAIT_FOR_LOAD && !splashDone) {
                     hideSplash();
@@ -203,7 +215,7 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                if (!request.isForMainFrame() || !AppConfig.OFFLINE_MODE || offlineShown) {
+                if (!request.isForMainFrame() || !"snapshot".equals(AppConfig.OFFLINE_STRATEGY) || offlineShown) {
                     return;
                 }
                 if (site != null && !site.isEmpty() && site.entryUrl() != null) {
@@ -216,9 +228,9 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    /** يقدّم الملف من نسخة الموقع المحفوظة داخل التطبيق عند انقطاع الإنترنت. */
+    /** يقدّم الملف من نسخة الموقع المحفوظة داخل التطبيق عند انقطاع الإنترنت (وضع النسخة الكاملة فقط). */
     private WebResourceResponse serveOffline(String url) {
-        if (site == null || site.isEmpty() || !AppConfig.OFFLINE_MODE) {
+        if (site == null || site.isEmpty() || !"snapshot".equals(AppConfig.OFFLINE_STRATEGY)) {
             return null;
         }
         if (isOnline()) {
@@ -335,7 +347,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    /**
+/**
      * جسر للتحكم في التطبيق من داخل صفحات الموقع:
      * AndroidApp.isInterstitialReady() / showInterstitial()
      * AndroidApp.isRewardedReady() / showRewarded()
@@ -373,7 +385,12 @@ public class MainActivity extends AppCompatActivity {
                 return false;
             }
             final boolean[] shown = new boolean[] { false };
-            runOnUiThread(() -> shown[0] = ads.showInterstitial());
+            runOnUiThread(() -> {
+                shown[0] = ads.showInterstitial();
+                if (shown[0]) {
+                    adWasShown = true;
+                }
+            });
             return shown[0];
         }
 
@@ -444,18 +461,54 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onPause() {
+        super.onPause();
         if (webView != null) {
             webView.onPause();
         }
-        super.onPause();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        doSync();
         if (webView != null) {
             webView.onResume();
+            // بعد إغلاق إعلان AdMob بيني، الـ WebView قد يفقد سياق الرسم (GPU) ويعرض أبيض.
+            // نتحقق بعد لحظة ونعيد التحميل لو الصفحة فارغة.
+            if (adWasShown) {
+                adWasShown = false;
+                webView.postDelayed(this::checkRenderHealth, 600);
+            }
+        }
+        doSync();
+    }
+
+    /** يكتشف فقدان سياق الرسم: لو body فارغ أو غير مرئي نعيد تحميل الصفحة الحالية. */
+    private void checkRenderHealth() {
+        if (webView == null || !pageLoaded) {
+            return;
+        }
+        webView.evaluateJavascript(
+            "(function(){"
+            + "try{"
+            + "var b=document.body;"
+            + "if(!b)return 'empty';"
+            + "var vis=b.childElementCount>0&&b.offsetWidth>0&&b.offsetHeight>0;"
+            + "return vis?'ok':'blank';"
+            + "}catch(e){return 'err';}"
+            + "})();",
+            result -> {
+                if (result != null && !""ok"".equals(result) && webView != null) {
+                    String url = currentUrl != null ? currentUrl : remoteConfig.startUrl;
+                    webView.loadUrl(url);
+                }
+            });
+    }
+
+    @Override
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        if (webView != null) {
+            webView.saveState(outState);
         }
     }
 

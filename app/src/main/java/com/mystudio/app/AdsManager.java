@@ -1,7 +1,6 @@
 package com.mystudio.app;
 
 import android.app.Activity;
-import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -17,6 +16,8 @@ import com.google.android.gms.ads.AdView;
 import com.google.android.gms.ads.FullScreenContentCallback;
 import com.google.android.gms.ads.LoadAdError;
 import com.google.android.gms.ads.MobileAds;
+import com.google.android.gms.ads.initialization.InitializationStatus;
+import com.google.android.gms.ads.initialization.OnInitializationCompleteListener;
 import com.google.android.gms.ads.interstitial.InterstitialAd;
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback;
 import com.google.android.gms.ads.rewarded.RewardedAd;
@@ -34,7 +35,10 @@ public class AdsManager {
     private InterstitialAd interstitial;
     private RewardedAd rewarded;
     private boolean started = false;
+    private boolean sdkInitialized = false;
+    private boolean initializing = false;
     private boolean interstitialLoading = false;
+    private boolean consentDone = false;
 
     public AdsManager(Activity activity, ViewGroup container, boolean enabled) {
         this.activity = activity;
@@ -42,35 +46,65 @@ public class AdsManager {
         this.enabled = enabled;
     }
 
+    /** لا يُهيئ الـ SDK هنا — فقط يسمح بالبدء. التهيئة المؤجلة تحدث عند أول طلب إعلان. */
     public void start() {
-        if (!enabled || started) {
+        if (!enabled) {
             return;
         }
         started = true;
-        if (AppConfig.CONSENT_ENABLED) {
+    }
+
+    // ----------------------------------------------------- تهيئة مؤجلة
+    /** يُهيئ AdMob مرة واحدة فقط عند الحاجة الفعلية، ثم يستدعي onReady. */
+    private void ensureInitialized(Runnable onReady) {
+        if (!enabled || !started) {
+            return;
+        }
+        if (sdkInitialized) {
+            if (onReady != null) {
+                onReady.run();
+            }
+            return;
+        }
+        if (AppConfig.CONSENT_ENABLED && !consentDone) {
+            final Runnable next = () -> ensureInitialized(onReady);
+            consentDone = true;
             final ConsentInformation info = UserMessagingPlatform.getConsentInformation(activity);
             ConsentRequestParameters params = new ConsentRequestParameters.Builder().build();
             info.requestConsentInfoUpdate(activity, params,
-                    () -> UserMessagingPlatform.loadAndShowConsentFormIfRequired(activity, formError -> initSdk()),
-                    formError -> initSdk());
-        } else {
-            initSdk();
+                    () -> UserMessagingPlatform.loadAndShowConsentFormIfRequired(activity,
+                            formError -> doInitSdk(onReady)),
+                    formError -> doInitSdk(onReady));
+            return;
         }
+        doInitSdk(onReady);
     }
 
-    private void initSdk() {
-        MobileAds.initialize(activity, status -> {
-            prepareBanner();
-            loadInterstitial();
-            loadRewarded();
-            if (AppConfig.BANNER_AUTO) {
-                showBanner(AppConfig.BANNER_POSITION);
+    private void doInitSdk(Runnable onReady) {
+        if (sdkInitialized) {
+            if (onReady != null) {
+                onReady.run();
+            }
+            return;
+        }
+        if (initializing) {
+            return;
+        }
+        initializing = true;
+        MobileAds.initialize(activity, new OnInitializationCompleteListener() {
+            @Override
+            public void onInitializationComplete(@NonNull InitializationStatus status) {
+                sdkInitialized = true;
+                initializing = false;
+                if (onReady != null) {
+                    onReady.run();
+                }
             }
         });
     }
 
     // ------------------------------------------------------------------ البانر
-    /** البانر طبقة عائمة فوق الصفحة ولا يأخذ مساحة من المحتوى. */
+    /** البانر طبقة عائمة أصغر (320×50) ويُرسم بـ software layer ليعزل عن GPU الـ WebView. */
     private void prepareBanner() {
         if (!AppConfig.BANNER_ENABLED || container == null || banner != null) {
             return;
@@ -78,12 +112,16 @@ public class AdsManager {
         try {
             AdView view = new AdView(activity);
             view.setAdUnitId(AppConfig.BANNER_ID);
-            DisplayMetrics dm = activity.getResources().getDisplayMetrics();
-            int widthDp = (int) (dm.widthPixels / dm.density);
-            view.setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(activity, widthDp));
+            view.setAdSize(AdSize.BANNER);
+            // عزل البانر عن GPU compositor الخاص بالـ WebView لمنع مربعات الوميض.
+            view.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
             view.setVisibility(View.GONE);
-            container.addView(view, new ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.gravity = "bottom".equalsIgnoreCase(AppConfig.BANNER_POSITION)
+                    ? Gravity.BOTTOM : Gravity.TOP;
+            lp.gravity |= Gravity.CENTER_HORIZONTAL;
+            container.addView(view, lp);
             view.loadAd(new AdRequest.Builder().build());
             banner = view;
         } catch (Exception ignored) {
@@ -95,25 +133,24 @@ public class AdsManager {
         if (!enabled || !AppConfig.BANNER_ENABLED) {
             return;
         }
-        if (banner == null) {
-            prepareBanner();
-        }
-        if (container != null) {
-            ViewGroup.LayoutParams raw = container.getLayoutParams();
-            if (raw instanceof FrameLayout.LayoutParams) {
-                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) raw;
-                lp.gravity = "bottom".equalsIgnoreCase(position) ? Gravity.BOTTOM : Gravity.TOP;
-                container.setLayoutParams(lp);
+        ensureInitialized(() -> {
+            if (banner == null) {
+                prepareBanner();
             }
-        }
-        if (banner != null) {
-            banner.setVisibility(View.VISIBLE);
-        }
+            if (banner != null) {
+                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) banner.getLayoutParams();
+                lp.gravity = ("bottom".equalsIgnoreCase(position) ? Gravity.BOTTOM : Gravity.TOP)
+                        | Gravity.CENTER_HORIZONTAL;
+                banner.setLayoutParams(lp);
+                banner.setVisibility(View.VISIBLE);
+            }
+        });
     }
 
     public void hideBanner() {
         if (banner != null) {
             banner.setVisibility(View.GONE);
+            banner.pause();
         }
     }
 
@@ -138,13 +175,11 @@ public class AdsManager {
                                 @Override
                                 public void onAdDismissedFullScreenContent() {
                                     interstitial = null;
-                                    loadInterstitial();
                                 }
 
                                 @Override
                                 public void onAdFailedToShowFullScreenContent(@NonNull AdError adError) {
                                     interstitial = null;
-                                    loadInterstitial();
                                 }
                             });
                         }
@@ -166,8 +201,11 @@ public class AdsManager {
 
     /** يعرض الإعلان البيني فقط إذا كان جاهزاً — الموقع هو من يطلبه. */
     public boolean showInterstitial() {
-        if (!isInterstitialReady()) {
-            loadInterstitial();
+        if (!enabled || !AppConfig.INTERSTITIAL_ENABLED) {
+            return false;
+        }
+        if (interstitial == null) {
+            ensureInitialized(this::loadInterstitial);
             return false;
         }
         try {
@@ -211,14 +249,13 @@ public class AdsManager {
             return false;
         }
         if (rewarded == null) {
-            loadRewarded();
+            ensureInitialized(this::loadRewarded);
             return false;
         }
         rewarded.setFullScreenContentCallback(new FullScreenContentCallback() {
             @Override
             public void onAdDismissedFullScreenContent() {
                 rewarded = null;
-                loadRewarded();
             }
         });
         rewarded.show(activity, rewardItem ->
