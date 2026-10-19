@@ -53,6 +53,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean pageLoaded = false;
     private boolean offlineShown = false;
     private boolean adWasShown = false;
+    private boolean pendingNextLoadInterstitial = false;
     private String currentUrl = null;
     private long splashStart = 0;
     private RemoteConfig remoteConfig;
@@ -210,6 +211,13 @@ public class MainActivity extends AppCompatActivity {
                 // تهيئة AdMob في الخلفية بعد استقرار الصفحة تماماً — لا تهدّج الواجهة
                 if (ads != null) {
                     new Handler(Looper.getMainLooper()).postDelayed(ads::prepareAsync, 1200);
+                }
+                // نمط Median.co: لو الموقع طلب إعلاناً بينياً مؤجلاً، يُعرض الآن بعد استقرار الصفحة.
+                if (pendingNextLoadInterstitial) {
+                    pendingNextLoadInterstitial = false;
+                    if (ads != null && ads.showInterstitial()) {
+                        adWasShown = true;
+                    }
                 }
             }
 
@@ -392,6 +400,16 @@ public class MainActivity extends AppCompatActivity {
                 }
             });
             return shown[0];
+        }
+
+        /** نمط Median.co: يطلب عرض الإعلان البيني عند اكتمال تحميل الصفحة التالية (نقطة مستقرة). */
+        @JavascriptInterface
+        public boolean showInterstitialOnNextPageLoadIfReady() {
+            if (ads == null || !ads.isInterstitialReady()) {
+                return false;
+            }
+            pendingNextLoadInterstitial = true;
+            return true;
         }
 
         @JavascriptInterface
