@@ -39,10 +39,11 @@ public class AdsManager {
     private InterstitialAd interstitial;
     private RewardedAd rewarded;
     private boolean started = false;
-    private boolean sdkInitialized = false;
-    private boolean initializing = false;
+    private volatile boolean sdkInitialized = false;
+    private volatile boolean initializing = false;
     private boolean interstitialLoading = false;
-    private boolean consentDone = false;
+    private volatile boolean consentDone = false;
+    private final java.util.List<Runnable> pendingCallbacks = new java.util.ArrayList<>();
     private HandlerThread prepThread;
     private Handler prepHandler;
 
@@ -87,11 +88,11 @@ public class AdsManager {
             new Handler(Looper.getMainLooper()).post(() ->
                     info.requestConsentInfoUpdate(activity, params,
                             () -> UserMessagingPlatform.loadAndShowConsentFormIfRequired(activity,
-                                    formError -> prepHandler.post(() -> doInitSdk(null))),
-                            formError -> prepHandler.post(() -> doInitSdk(null))));
+                                    formError -> prepHandler.post(AdsManager.this::doInitSdk)),
+                            formError -> prepHandler.post(AdsManager.this::doInitSdk)));
             return;
         }
-        doInitSdk(null);
+        doInitSdk();
     }
 
     // ----------------------------------------------------- تهيئة عند الطلب
@@ -106,27 +107,17 @@ public class AdsManager {
             }
             return;
         }
+        // نضع الرد في قائمة الانتظار؛ يُنفَّذ بعد اكتمال التهيئة فعلاً على الـ UI thread.
+        if (onReady != null) {
+            pendingCallbacks.add(onReady);
+        }
         if (!initializing) {
             prepareAsync();
         }
-        if (onReady != null) {
-            // التهيئة جارية في الخلفية — ننتظرها ثم نكمل
-            prepHandler.post(() -> doInitSdk(() ->
-                    new Handler(Looper.getMainLooper()).post(onReady)));
-        }
     }
 
-    private void doInitSdk(Runnable onReady) {
-        if (sdkInitialized) {
-            if (onReady != null) {
-                onReady.run();
-            }
-            return;
-        }
-        if (initializing) {
-            if (onReady != null) {
-                onReady.run();
-            }
+    private void doInitSdk() {
+        if (sdkInitialized || initializing) {
             return;
         }
         initializing = true;
@@ -135,20 +126,20 @@ public class AdsManager {
             public void onInitializationComplete(@NonNull InitializationStatus status) {
                 sdkInitialized = true;
                 initializing = false;
-                // تحميل مسبق للإعلانات في الخلفية لتكون جاهزة عند الطلب
-                if (AppConfig.INTERSTITIAL_ENABLED || AppConfig.REWARDED_ENABLED) {
-                    new Handler(Looper.getMainLooper()).post(() -> {
-                        if (AppConfig.INTERSTITIAL_ENABLED) {
-                            loadInterstitial();
-                        }
-                        if (AppConfig.REWARDED_ENABLED) {
-                            loadRewarded();
-                        }
-                    });
+                // تحميل مسبق للإعلانات لتكون جاهزة عند الطلب، ثم تنفيذ كل الطلبات المعلّقة دفعة واحدة.
+                if (AppConfig.INTERSTITIAL_ENABLED) {
+                    loadInterstitial();
                 }
-                if (onReady != null) {
-                    onReady.run();
+                if (AppConfig.REWARDED_ENABLED) {
+                    loadRewarded();
                 }
+                for (Runnable cb : pendingCallbacks) {
+                    try {
+                        cb.run();
+                    } catch (Exception ignored) {
+                    }
+                }
+                pendingCallbacks.clear();
             }
         });
     }

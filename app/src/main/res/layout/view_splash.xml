@@ -45,7 +45,7 @@
         android:scaleType="fitCenter"
         android:src="@mipmap/ic_launcher_foreground"
         app:frx="0.5"
-        app:fry="0.4769436673978232" />
+        app:fry="0.5" />
 
     <TextView
         android:layout_width="wrap_content"
