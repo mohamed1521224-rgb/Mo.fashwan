@@ -490,36 +490,26 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         if (webView != null) {
             webView.onResume();
-            // بعد إغلاق إعلان AdMob بيني، الـ WebView قد يفقد سياق الرسم (GPU) ويعرض أبيض.
-            // نتحقق بعد لحظة ونعيد التحميل لو الصفحة فارغة.
+            // بعد إغلاق إعلان AdMob بيني، قد يفقد الـ WebView سياق الرسم (GPU) فيظهر أبيض.
+            // نُعيد بناء سطح الرسم بطريقة غير مدمرة: تبديل الرؤية INVISIBLE→VISIBLE
+            // يجبر نظام العرض على إعادة تركيب الـ WebView دون إعادة تحميل الصفحة،
+            // ودون فقدان حالة JavaScript أو تغيير الـ URL الحالي.
             if (adWasShown) {
                 adWasShown = false;
-                webView.postDelayed(this::checkRenderHealth, 600);
+                webView.post(() -> {
+                    if (webView == null) {
+                        return;
+                    }
+                    webView.setVisibility(View.INVISIBLE);
+                    webView.post(() -> {
+                        if (webView != null) {
+                            webView.setVisibility(View.VISIBLE);
+                        }
+                    });
+                });
             }
         }
         doSync();
-    }
-
-    /** يكتشف فقدان سياق الرسم: لو body فارغ أو غير مرئي نعيد تحميل الصفحة الحالية. */
-    private void checkRenderHealth() {
-        if (webView == null || !pageLoaded) {
-            return;
-        }
-        webView.evaluateJavascript(
-            "(function(){"
-            + "try{"
-            + "var b=document.body;"
-            + "if(!b)return 'empty';"
-            + "var vis=b.childElementCount>0&&b.offsetWidth>0&&b.offsetHeight>0;"
-            + "return vis?'ok':'blank';"
-            + "}catch(e){return 'err';}"
-            + "})();",
-            result -> {
-                if (result != null && !"\"ok\"".equals(result) && webView != null) {
-                    String url = currentUrl != null ? currentUrl : remoteConfig.startUrl;
-                    webView.loadUrl(url);
-                }
-            });
     }
 
     @Override

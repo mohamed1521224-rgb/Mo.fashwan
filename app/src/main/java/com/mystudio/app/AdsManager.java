@@ -216,11 +216,14 @@ public class AdsManager {
                                 @Override
                                 public void onAdDismissedFullScreenContent() {
                                     interstitial = null;
+                                    // تحميل الإعلان البيني التالي ليكون جاهزاً عند الطلب التالي من الموقع.
+                                    loadInterstitial();
                                 }
 
                                 @Override
                                 public void onAdFailedToShowFullScreenContent(@NonNull AdError adError) {
                                     interstitial = null;
+                                    loadInterstitial();
                                 }
                             });
                         }
