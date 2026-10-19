@@ -211,6 +211,10 @@ public class MainActivity extends AppCompatActivity {
                 if (remoteConfig != null && !remoteConfig.jsCode.isEmpty()) {
                     view.evaluateJavascript(remoteConfig.jsCode, null);
                 }
+                // تهيئة AdMob في الخلفية بعد استقرار الصفحة تماماً — لا تهدّج الواجهة
+                if (ads != null) {
+                    new Handler(Looper.getMainLooper()).postDelayed(ads::prepareAsync, 1200);
+                }
             }
 
             @Override
@@ -497,7 +501,7 @@ public class MainActivity extends AppCompatActivity {
             + "}catch(e){return 'err';}"
             + "})();",
             result -> {
-                if (result != null && !""ok"".equals(result) && webView != null) {
+                if (result != null && !"\"ok\"".equals(result) && webView != null) {
                     String url = currentUrl != null ? currentUrl : remoteConfig.startUrl;
                     webView.loadUrl(url);
                 }
@@ -514,6 +518,9 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (ads != null) {
+            ads.shutdown();
+        }
         if (webView != null) {
             webView.destroy();
             webView = null;

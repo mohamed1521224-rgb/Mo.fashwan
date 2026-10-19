@@ -1,6 +1,10 @@
 package com.mystudio.app;
 
 import android.app.Activity;
+import android.os.Handler;
+import android.os.HandlerThread;
+import android.os.Looper;
+import android.os.Process;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -39,6 +43,8 @@ public class AdsManager {
     private boolean initializing = false;
     private boolean interstitialLoading = false;
     private boolean consentDone = false;
+    private HandlerThread prepThread;
+    private Handler prepHandler;
 
     public AdsManager(Activity activity, ViewGroup container, boolean enabled) {
         this.activity = activity;
@@ -46,7 +52,7 @@ public class AdsManager {
         this.enabled = enabled;
     }
 
-    /** لا يُهيئ الـ SDK هنا — فقط يسمح بالبدء. التهيئة المؤجلة تحدث عند أول طلب إعلان. */
+    /** يسمح بالبدء دون أي تهيئة — التهيئة تتم لاحقاً في الخلفية عبر prepareAsync(). */
     public void start() {
         if (!enabled) {
             return;
@@ -54,8 +60,42 @@ public class AdsManager {
         started = true;
     }
 
-    // ----------------------------------------------------- تهيئة مؤجلة
-    /** يُهيئ AdMob مرة واحدة فقط عند الحاجة الفعلية، ثم يستدعي onReady. */
+    // -------------------------------------------------- تهيئة خلفية مستقلة
+    /**
+     * يُجهّز AdMob بالكامل في الخلفية بعيداً عن الـ UI thread وبعد استقرار الصفحة،
+     * فلا يهنج التطبيق إطلاقاً. عند انتهاء التهيئة يحمّل الإعلانات مسبقاً لتكون
+     * جاهزة فور طلب الموقع لها.
+     */
+    public void prepareAsync() {
+        if (!enabled || !started || sdkInitialized || initializing) {
+            return;
+        }
+        if (prepThread == null) {
+            prepThread = new HandlerThread("AdMobPrep", Process.THREAD_PRIORITY_BACKGROUND);
+            prepThread.start();
+            prepHandler = new Handler(prepThread.getLooper());
+        }
+        prepHandler.post(this::runConsentThenInit);
+    }
+
+    /** Consent form يجب أن يظهر على الـ UI thread، ثم نعود للخلفية للتهيئة. */
+    private void runConsentThenInit() {
+        if (AppConfig.CONSENT_ENABLED && !consentDone) {
+            consentDone = true;
+            final ConsentInformation info = UserMessagingPlatform.getConsentInformation(activity);
+            ConsentRequestParameters params = new ConsentRequestParameters.Builder().build();
+            new Handler(Looper.getMainLooper()).post(() ->
+                    info.requestConsentInfoUpdate(activity, params,
+                            () -> UserMessagingPlatform.loadAndShowConsentFormIfRequired(activity,
+                                    formError -> prepHandler.post(() -> doInitSdk(null))),
+                            formError -> prepHandler.post(() -> doInitSdk(null))));
+            return;
+        }
+        doInitSdk(null);
+    }
+
+    // ----------------------------------------------------- تهيئة عند الطلب
+    /** مسار احتياطي عند طلب الإعلان قبل اكتمال التهيئة الخلفية. */
     private void ensureInitialized(Runnable onReady) {
         if (!enabled || !started) {
             return;
@@ -66,18 +106,14 @@ public class AdsManager {
             }
             return;
         }
-        if (AppConfig.CONSENT_ENABLED && !consentDone) {
-            final Runnable next = () -> ensureInitialized(onReady);
-            consentDone = true;
-            final ConsentInformation info = UserMessagingPlatform.getConsentInformation(activity);
-            ConsentRequestParameters params = new ConsentRequestParameters.Builder().build();
-            info.requestConsentInfoUpdate(activity, params,
-                    () -> UserMessagingPlatform.loadAndShowConsentFormIfRequired(activity,
-                            formError -> doInitSdk(onReady)),
-                    formError -> doInitSdk(onReady));
-            return;
+        if (!initializing) {
+            prepareAsync();
         }
-        doInitSdk(onReady);
+        if (onReady != null) {
+            // التهيئة جارية في الخلفية — ننتظرها ثم نكمل
+            prepHandler.post(() -> doInitSdk(() ->
+                    new Handler(Looper.getMainLooper()).post(onReady)));
+        }
     }
 
     private void doInitSdk(Runnable onReady) {
@@ -88,6 +124,9 @@ public class AdsManager {
             return;
         }
         if (initializing) {
+            if (onReady != null) {
+                onReady.run();
+            }
             return;
         }
         initializing = true;
@@ -96,6 +135,17 @@ public class AdsManager {
             public void onInitializationComplete(@NonNull InitializationStatus status) {
                 sdkInitialized = true;
                 initializing = false;
+                // تحميل مسبق للإعلانات في الخلفية لتكون جاهزة عند الطلب
+                if (AppConfig.INTERSTITIAL_ENABLED || AppConfig.REWARDED_ENABLED) {
+                    new Handler(Looper.getMainLooper()).post(() -> {
+                        if (AppConfig.INTERSTITIAL_ENABLED) {
+                            loadInterstitial();
+                        }
+                        if (AppConfig.REWARDED_ENABLED) {
+                            loadRewarded();
+                        }
+                    });
+                }
                 if (onReady != null) {
                     onReady.run();
                 }
@@ -266,5 +316,14 @@ public class AdsManager {
 
     public void toast(String message) {
         Toast.makeText(activity, message == null ? "" : message, Toast.LENGTH_SHORT).show();
+    }
+
+    /** يوقف thread التهيئة الخلفية عند إغلاق التطبيق. */
+    public void shutdown() {
+        if (prepThread != null) {
+            prepThread.quitSafely();
+            prepThread = null;
+            prepHandler = null;
+        }
     }
 }
