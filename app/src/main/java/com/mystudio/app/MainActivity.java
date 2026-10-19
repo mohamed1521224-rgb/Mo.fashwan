@@ -133,10 +133,6 @@ public class MainActivity extends AppCompatActivity {
         s.setAllowFileAccess(true);
         s.setAllowContentAccess(true);
         s.setCacheMode(AppConfig.CACHE_ENABLED ? WebSettings.LOAD_DEFAULT : WebSettings.LOAD_NO_CACHE);
-        s.setAppCacheEnabled(AppConfig.CACHE_ENABLED);
-        if (AppConfig.CACHE_ENABLED) {
-            s.setAppCachePath(getCacheDir().getAbsolutePath());
-        }
         s.setMixedContentMode(AppConfig.CLEARTEXT
                 ? WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 : WebSettings.MIXED_CONTENT_NEVER_ALLOW);
