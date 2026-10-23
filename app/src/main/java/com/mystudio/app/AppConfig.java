@@ -20,7 +20,7 @@ public final class AppConfig {
 
     public static final String JS_CODE = "// \u0643\u0648\u062f JavaScript \u064a\u064f\u0646\u0641\u064e\u0651\u0630 \u0641\u064a \u0643\u0644 \u0635\u0641\u062d\u0629\nconsole.log(\"app ready\");";
 
-    public static final boolean ADS_ENABLED = false;
+    public static final boolean ADS_ENABLED = true;
     public static final boolean CONSENT_ENABLED = true;
     public static final boolean BANNER_ENABLED = true;
     public static final String BANNER_POSITION = "bottom";

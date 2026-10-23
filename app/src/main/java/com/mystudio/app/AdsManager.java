@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import java.util.concurrent.atomic.AtomicBoolean;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -18,6 +19,7 @@ import com.google.android.gms.ads.AdSize;
 import com.google.android.gms.ads.AdView;
 import com.google.android.gms.ads.FullScreenContentCallback;
 import com.google.android.gms.ads.LoadAdError;
+
 import com.google.android.gms.ads.interstitial.InterstitialAd;
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback;
 import com.google.android.gms.ads.rewarded.RewardedAd;
@@ -25,8 +27,6 @@ import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback;
 import com.google.android.ump.ConsentInformation;
 import com.google.android.ump.ConsentRequestParameters;
 import com.google.android.ump.UserMessagingPlatform;
-
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class AdsManager {
 
@@ -89,6 +89,7 @@ public class AdsManager {
         requireMain();
         preparationRequested = true;
         if (!alive() || !resumed || sdkInitialized || preparing) return;
+        // Lock BEFORE the asynchronous consent request, not after it.
         preparing = true;
         Log.i(TAG, "consent_begin");
         if (!AdUi.execute("consent_request", this::requestConsent)) preparing = false;
@@ -134,9 +135,7 @@ public class AdsManager {
     }
 
     private void initializeSdk() {
-        if (!AdsSdk.initialize(activity.getApplicationContext(), sdkReadyCallback, sdkFailedCallback)) {
-            preparing = false;
-        }
+        if (!AdsSdk.initialize(activity.getApplicationContext(), sdkReadyCallback, sdkFailedCallback)) preparing = false;
     }
 
     private void onSdkFailed() {
@@ -149,83 +148,54 @@ public class AdsManager {
         if (!alive() || sdkInitialized) return;
         sdkInitialized = true;
         preparing = false;
+        // Preload only; displaying fullscreen ads still requires a website request.
         loadInterstitial();
         loadRewarded();
         if (bannerRequested) showBanner(bannerPosition);
     }
 
-    private void applyBannerLayout() {
-        if (container == null) return;
-        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) container.getLayoutParams();
-        if (lp == null) {
-            lp = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        }
-        int gravity = ("top".equalsIgnoreCase(bannerPosition) ? Gravity.TOP : Gravity.BOTTOM)
-                | Gravity.CENTER_HORIZONTAL;
-        if (lp.gravity != gravity) {
-            lp.gravity = gravity;
-            lp.height = (int) (50 * activity.getResources().getDisplayMetrics().density + 0.5f);
-            container.setLayoutParams(lp);
-        }
-    }
-
+    // ------------------------------------------------------------------ البانر
     private void prepareBanner() {
         requireMain();
-        if (!alive() || !sdkInitialized || !AppConfig.BANNER_ENABLED || container == null || banner != null) {
-            return;
-        }
-
+        if (!alive() || !sdkInitialized || !AppConfig.BANNER_ENABLED || container == null || banner != null) return;
         boolean prepared = AdUi.execute("banner_prepare", () -> {
             banner = new AdView(activity);
             banner.setAdUnitId(AppConfig.BANNER_ID);
             banner.setAdSize(AdSize.BANNER);
-
             int width = Math.round(320 * activity.getResources().getDisplayMetrics().density);
             int height = Math.round(50 * activity.getResources().getDisplayMetrics().density);
-            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(width, height, Gravity.CENTER);
-            container.addView(banner, params);
-
+            container.addView(banner, new FrameLayout.LayoutParams(width, height, Gravity.CENTER));
             Log.i(TAG, "banner_load_requested thread=" + Thread.currentThread().getName());
             banner.loadAd(new AdRequest.Builder().build());
         });
-
         if (!prepared) disposeBanner();
     }
 
     public void showBanner(String position) {
         requireMain();
         if (!alive() || !AppConfig.BANNER_ENABLED) return;
-
         bannerRequested = true;
         bannerPosition = "top".equalsIgnoreCase(position) ? "top" : "bottom";
         if (!sdkInitialized) {
             prepareAsync();
             return;
         }
-
-        if (banner == null) {
-            prepareBanner();
-        }
+        prepareBanner();
         if (banner == null) return;
-
         boolean shown = AdUi.execute("banner_show", () -> {
-            applyBannerLayout();
-            if (bannerVisible) {
-                banner.setVisibility(View.VISIBLE);
-                container.setVisibility(View.VISIBLE);
-                return;
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) container.getLayoutParams();
+            int gravity = ("top".equals(bannerPosition) ? Gravity.TOP : Gravity.BOTTOM) | Gravity.CENTER_HORIZONTAL;
+            // Repeated website requests must not continuously invalidate the layout.
+            if (lp.gravity != gravity) {
+                lp.gravity = gravity;
+                container.setLayoutParams(lp);
             }
+            if (bannerVisible) return;
             banner.setVisibility(View.VISIBLE);
             container.setVisibility(View.VISIBLE);
             bannerVisible = true;
-            if (resumed) {
-                banner.resume();
-            } else {
-                banner.pause();
-            }
+            if (resumed) banner.resume();
+            else banner.pause();
         });
         if (!shown) disposeBanner();
     }
@@ -250,9 +220,7 @@ public class AdsManager {
         banner = null;
         bannerVisible = false;
         if (previous != null) {
-            if (container != null && previous.getParent() instanceof ViewGroup) {
-                AdUi.execute("banner_detach", () -> ((ViewGroup) previous.getParent()).removeView(previous));
-            }
+            AdUi.execute("banner_detach", () -> container.removeView(previous));
             AdUi.execute("banner_destroy", previous::destroy);
         }
         if (container != null) AdUi.execute("banner_container_hide", () -> container.setVisibility(View.INVISIBLE));
@@ -262,6 +230,7 @@ public class AdsManager {
         return !destroyed && bannerVisible;
     }
 
+    // ------------------------------------------------------- الإعلان البيني
     private void loadInterstitial() {
         requireMain();
         if (!alive() || !sdkInitialized || !AppConfig.INTERSTITIAL_ENABLED || interstitialLoading || interstitial != null) return;
@@ -269,27 +238,27 @@ public class AdsManager {
         Log.i(TAG, "interstitial_load_requested thread=" + Thread.currentThread().getName());
         boolean requested = AdUi.execute("interstitial_load", () ->
                 InterstitialAd.load(activity.getApplicationContext(), AppConfig.INTERSTITIAL_ID,
-                        new AdRequest.Builder().build(), new InterstitialAdLoadCallback() {
-                            @Override
-                            public void onAdLoaded(@NonNull InterstitialAd ad) {
-                                onMain(() -> {
-                                    if (!alive()) return;
-                                    interstitialLoading = false;
-                                    interstitial = ad;
-                                    Log.i(TAG, "interstitial_loaded");
-                                });
-                            }
+                new AdRequest.Builder().build(), new InterstitialAdLoadCallback() {
+                    @Override
+                    public void onAdLoaded(@NonNull InterstitialAd ad) {
+                        onMain(() -> {
+                            if (!alive()) return;
+                            interstitialLoading = false;
+                            interstitial = ad;
+                            Log.i(TAG, "interstitial_loaded");
+                        });
+                    }
 
-                            @Override
-                            public void onAdFailedToLoad(@NonNull LoadAdError error) {
-                                onMain(() -> {
-                                    if (!alive()) return;
-                                    interstitialLoading = false;
-                                    interstitial = null;
-                                    Log.w(TAG, "interstitial_load_failed=" + error.getCode());
-                                });
-                            }
-                        }));
+                    @Override
+                    public void onAdFailedToLoad(@NonNull LoadAdError error) {
+                        onMain(() -> {
+                            if (!alive()) return;
+                            interstitialLoading = false;
+                            interstitial = null;
+                            Log.w(TAG, "interstitial_load_failed=" + error.getCode());
+                        });
+                    }
+                }));
         if (!requested) {
             interstitialLoading = false;
             interstitial = null;
@@ -297,10 +266,12 @@ public class AdsManager {
     }
 
     public boolean isInterstitialReady() {
+        // Bridge thread reads only published state, never SDK/View methods.
         return enabled && resumed && !destroyed && !fullScreenShowing
                 && !displayPending.get() && interstitial != null;
     }
 
+    /** Off-main callers receive acceptance, not a blocking wait for SDK presentation. */
     public boolean showInterstitial() {
         if (!isInterstitialReady()) {
             main.post(() -> {
@@ -337,6 +308,7 @@ public class AdsManager {
         return shown;
     }
 
+    // ---------------------------------------------------- الإعلان المكافِئ
     private void loadRewarded() {
         requireMain();
         if (!alive() || !sdkInitialized || !AppConfig.REWARDED_ENABLED || rewardedLoading || rewarded != null) return;
@@ -344,27 +316,27 @@ public class AdsManager {
         Log.i(TAG, "rewarded_load_requested thread=" + Thread.currentThread().getName());
         boolean requested = AdUi.execute("rewarded_load", () ->
                 RewardedAd.load(activity.getApplicationContext(), AppConfig.REWARDED_ID,
-                        new AdRequest.Builder().build(), new RewardedAdLoadCallback() {
-                            @Override
-                            public void onAdLoaded(@NonNull RewardedAd ad) {
-                                onMain(() -> {
-                                    if (!alive()) return;
-                                    rewardedLoading = false;
-                                    rewarded = ad;
-                                    Log.i(TAG, "rewarded_loaded");
-                                });
-                            }
+                new AdRequest.Builder().build(), new RewardedAdLoadCallback() {
+                    @Override
+                    public void onAdLoaded(@NonNull RewardedAd ad) {
+                        onMain(() -> {
+                            if (!alive()) return;
+                            rewardedLoading = false;
+                            rewarded = ad;
+                            Log.i(TAG, "rewarded_loaded");
+                        });
+                    }
 
-                            @Override
-                            public void onAdFailedToLoad(@NonNull LoadAdError error) {
-                                onMain(() -> {
-                                    if (!alive()) return;
-                                    rewardedLoading = false;
-                                    rewarded = null;
-                                    Log.w(TAG, "rewarded_load_failed=" + error.getCode());
-                                });
-                            }
-                        }));
+                    @Override
+                    public void onAdFailedToLoad(@NonNull LoadAdError error) {
+                        onMain(() -> {
+                            if (!alive()) return;
+                            rewardedLoading = false;
+                            rewarded = null;
+                            Log.w(TAG, "rewarded_load_failed=" + error.getCode());
+                        });
+                    }
+                }));
         if (!requested) {
             rewardedLoading = false;
             rewarded = null;
@@ -438,6 +410,7 @@ public class AdsManager {
         fullScreenShowing = false;
         Log.i(TAG, format + (error == null ? "_dismissed" : "_show_failed=" + error.getCode()));
         if (!alive()) return;
+        // No WebView reference, reload, visibility change or custom Activity here.
         if ("rewarded".equals(format)) loadRewarded();
         else loadInterstitial();
     }
@@ -476,8 +449,5 @@ public class AdsManager {
         AdsSdk.cancel(activity.getApplicationContext(), sdkReadyCallback);
         main.removeCallbacksAndMessages(null);
         disposeBanner();
-        if (container != null && container.getChildCount() > 0) {
-            container.removeAllViews();
-        }
     }
 }
