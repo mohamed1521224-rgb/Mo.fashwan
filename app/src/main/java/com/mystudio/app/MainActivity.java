@@ -62,7 +62,7 @@ public class MainActivity extends AppCompatActivity {
     private final AtomicBoolean pendingNextLoadInterstitial = new AtomicBoolean(false);
     private volatile boolean destroyed = false;
     private boolean syncInFlight = false;
-    private boolean adsPreparationScheduled = false;
+    private boolean adsBootstrapped = false;
     private final Runnable periodicSync = this::doSync;
     private long splashStart = 0;
     private RemoteConfig remoteConfig;
@@ -220,12 +220,7 @@ public class MainActivity extends AppCompatActivity {
                 if (remoteConfig != null && !remoteConfig.jsCode.isEmpty()) {
                     view.evaluateJavascript(remoteConfig.jsCode, null);
                 }
-                if (ads != null && !adsPreparationScheduled) {
-                    adsPreparationScheduled = true;
-                    syncHandler.postDelayed(() -> {
-                        if (!destroyed && ads != null) ads.prepareAsync();
-                    }, 1200);
-                }
+                scheduleAdsPreparationOnce();
                 // Only an explicit website request arms this existing bridge option.
                 if (pendingNextLoadInterstitial.getAndSet(false) && ads != null) {
                     ads.showInterstitial();
@@ -504,6 +499,24 @@ public class MainActivity extends AppCompatActivity {
         public boolean isBannerVisible() {
             return AdUi.call("bridge_banner_visible", () -> !destroyed && ads != null && ads.isBannerVisible());
         }
+    }
+
+    /** الواجهة مستقرة وآمنة لتحضير الإعلانات. */
+    private boolean isUiSafeForAds() {
+        if (destroyed || isFinishing()) return false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && isDestroyed()) return false;
+        return true;
+    }
+
+    /** تحضير الإعلانات مرة واحدة فقط، وبعد استقرار الواجهة. */
+    private void scheduleAdsPreparationOnce() {
+        if (destroyed || ads == null || adsBootstrapped || !isUiSafeForAds()) return;
+        adsBootstrapped = true;
+        syncHandler.postDelayed(() -> {
+            if (!destroyed && ads != null && isUiSafeForAds()) {
+                ads.prepareAsync();
+            }
+        }, 1200);
     }
 
     private void startPeriodicSync() {
