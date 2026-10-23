@@ -11,6 +11,19 @@
         android:layout_height="match_parent"
         android:background="@drawable/splash_bg" />
 
+    <!-- سينمائي داكن: تدرّج خفيف أسفل الشاشة، ثم توهّج إشعاعي خلف الشعار. -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/splash_wash" />
+
+    <View
+        android:layout_width="1170dp"
+        android:layout_height="1300dp"
+        android:background="@drawable/splash_glow"
+        app:frx="0.5"
+        app:fry="0.5" />
+
     <!-- الطبقة السفلية: شريط التحميل (تظهر كل العناصر الأخرى فوقه) -->
     <LinearLayout
         android:id="@+id/loader_dots"
@@ -24,13 +37,13 @@
             android:id="@+id/dot_1"
             android:layout_width="10dp"
             android:layout_height="10dp"
-            android:layout_marginEnd="8dp"
+            android:layout_marginEnd="13dp"
             android:background="@drawable/dot_shape" />
         <View
             android:id="@+id/dot_2"
             android:layout_width="10dp"
             android:layout_height="10dp"
-            android:layout_marginEnd="8dp"
+            android:layout_marginEnd="13dp"
             android:background="@drawable/dot_shape" />
         <View
             android:id="@+id/dot_3"
@@ -40,8 +53,10 @@
     </LinearLayout>
 
     <ImageView
+        android:id="@+id/splash_icon"
         android:layout_width="260dp"
         android:layout_height="260dp"
+        android:background="@drawable/icon_mark"
         android:scaleType="fitCenter"
         android:src="@mipmap/ic_launcher_foreground"
         app:frx="0.5"
