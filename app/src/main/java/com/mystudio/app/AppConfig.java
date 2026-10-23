@@ -16,7 +16,7 @@ public final class AppConfig {
     public static final boolean EXTERNAL_LINKS = false;
 
     public static final boolean SPLASH_WAIT_FOR_LOAD = true;
-    public static final int SPLASH_DURATION = 3000;
+    public static final int SPLASH_DURATION = 5100;
 
     public static final String JS_CODE = "// \u0643\u0648\u062f JavaScript \u064a\u064f\u0646\u0641\u064e\u0651\u0630 \u0641\u064a \u0643\u0644 \u0635\u0641\u062d\u0629\nconsole.log(\"app ready\");";
 
