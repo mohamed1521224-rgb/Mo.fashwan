@@ -6,9 +6,6 @@ import android.animation.PropertyValuesHolder;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
-import android.graphics.ImageDecoder;
-import android.graphics.drawable.Animatable;
-import android.graphics.drawable.Drawable;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -19,13 +16,12 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
-import android.webkit.RenderProcessGoneDetail;
-import java.util.concurrent.atomic.AtomicBoolean;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -34,7 +30,6 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.Toast;
 
 import androidx.activity.OnBackPressedCallback;
@@ -44,6 +39,8 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -63,6 +60,21 @@ public class MainActivity extends AppCompatActivity {
     private long splashStart = 0;
     private RemoteConfig remoteConfig;
     private final Handler syncHandler = new Handler(Looper.getMainLooper());
+
+    private boolean isUiSafeForAds() {
+        if (destroyed || isFinishing()) return false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && isDestroyed()) return false;
+        return true;
+    }
+
+    private void scheduleAdsPreparation() {
+        if (destroyed || ads == null || adsPreparationScheduled || !isUiSafeForAds()) return;
+        adsPreparationScheduled = true;
+        syncHandler.postDelayed(() -> {
+            if (destroyed || ads == null || !isUiSafeForAds()) return;
+            ads.prepareAsync();
+        }, 1200);
+    }
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override
@@ -102,7 +114,7 @@ public class MainActivity extends AppCompatActivity {
         if (rewardButton != null) {
             rewardButton.setOnClickListener(v -> {
                 if (ads != null && !ads.showRewarded()) {
-                    Toast.makeText(MainActivity.this, "\u0627\u0644\u0625\u0639\u0644\u0627\u0646 \u063a\u064a\u0631 \u0645\u062a\u0627\u062d \u0627\u0644\u0622\u0646", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(MainActivity.this, "الإعلان غير متاح الآن", Toast.LENGTH_SHORT).show();
                 }
             });
         }
@@ -136,7 +148,6 @@ public class MainActivity extends AppCompatActivity {
         s.setUseWideViewPort(true);
         s.setBuiltInZoomControls(false);
         s.setDisplayZoomControls(false);
-        // نوافذ الموقع الجديدة (target=_blank / window.open) تفتح داخل التطبيق نفسه
         s.setSupportMultipleWindows(true);
         s.setJavaScriptCanOpenWindowsAutomatically(true);
         s.setAllowFileAccess(true);
@@ -168,7 +179,6 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
-                // النافذة الجديدة تُفتح في نفس الـ WebView بدل الخروج للمتصفح
                 WebView target = view;
                 WebView popup = new WebView(MainActivity.this);
                 popup.getSettings().setJavaScriptEnabled(true);
@@ -216,13 +226,9 @@ public class MainActivity extends AppCompatActivity {
                 if (remoteConfig != null && !remoteConfig.jsCode.isEmpty()) {
                     view.evaluateJavascript(remoteConfig.jsCode, null);
                 }
-                if (ads != null && !adsPreparationScheduled) {
-                    adsPreparationScheduled = true;
-                    syncHandler.postDelayed(() -> {
-                        if (!destroyed && ads != null) ads.prepareAsync();
-                    }, 1200);
+                if (ads != null && !adsPreparationScheduled && isUiSafeForAds()) {
+                    scheduleAdsPreparation();
                 }
-                // Only an explicit website request arms this existing bridge option.
                 if (pendingNextLoadInterstitial.getAndSet(false) && ads != null) {
                     ads.showInterstitial();
                 }
@@ -233,7 +239,6 @@ public class MainActivity extends AppCompatActivity {
                 Log.e("NativeBuilderWebView", "renderer_gone webView="
                         + System.identityHashCode(view) + " crashed=" + detail.didCrash()
                         + " priority=" + detail.rendererPriorityAtExit());
-                // A dead renderer cannot retain JavaScript state. Do not disguise it with a reload.
                 return super.onRenderProcessGone(view, detail);
             }
 
@@ -252,7 +257,6 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    /** يقدّم الملف من نسخة الموقع المحفوظة داخل التطبيق عند انقطاع الإنترنت (وضع النسخة الكاملة فقط). */
     private WebResourceResponse serveOffline(String url) {
         if (site == null || site.isEmpty() || !"snapshot".equals(AppConfig.OFFLINE_STRATEGY)) {
             return null;
@@ -280,7 +284,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    /** كل روابط الموقع تبقى داخل التطبيق، ويُفتح الخارجي فقط عند تفعيل الخيار يدوياً. */
     private boolean handleUrl(Uri uri) {
         String scheme = uri.getScheme() == null ? "" : uri.getScheme();
         if (scheme.equals("http") || scheme.equals("https") || scheme.equals("file")
@@ -371,13 +374,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-/**
-     * جسر للتحكم في التطبيق من داخل صفحات الموقع:
-     * AndroidApp.isInterstitialReady() / showInterstitial()
-     * AndroidApp.isRewardedReady() / showRewarded()
-     * AndroidApp.showBanner() / showBannerAt("top"|"bottom") / hideBanner() / isBannerVisible()
-     * AndroidApp.reload() / toast("...") / isOnlineNow()
-     */
     public class Bridge {
 
         @JavascriptInterface
@@ -406,11 +402,9 @@ public class MainActivity extends AppCompatActivity {
 
         @JavascriptInterface
         public boolean showInterstitial() {
-            // AdsManager reserves the request, then guards presentation on the main thread.
             return AdUi.call("bridge_interstitial_request", () -> !destroyed && ads != null && ads.showInterstitial());
         }
 
-        /** نمط Median.co: يطلب عرض الإعلان البيني عند اكتمال تحميل الصفحة التالية (نقطة مستقرة). */
         @JavascriptInterface
         public boolean showInterstitialOnNextPageLoadIfReady() {
             return AdUi.call("bridge_next_page_request", () -> !destroyed && ads != null
@@ -471,8 +465,6 @@ public class MainActivity extends AppCompatActivity {
         remoteConfig.sync(changed -> runOnUiThread(() -> {
             syncInFlight = false;
             if (destroyed) return;
-            // Keep configured periodic URL updates, but never navigate beneath a fullscreen ad.
-            // Updates received during an ad remain cached for the next app launch.
             if (changed && webView != null && !syncStartedDuringAd
                     && (ads == null || (!ads.isFullScreenShowing()
                     && ads.getFullScreenGeneration() == adGeneration))) {
@@ -494,9 +486,13 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         if (webView != null) webView.onResume();
-        if (ads != null) ads.onResume();
+        if (ads != null) {
+            ads.onResume();
+            if (!adsPreparationScheduled && isUiSafeForAds()) {
+                scheduleAdsPreparation();
+            }
+        }
         Log.i("NativeBuilderWebView", "activity_resume webView=" + System.identityHashCode(webView));
-        // No visibility toggles, render-health JavaScript, reload or remote sync on ad return.
     }
 
     @Override
