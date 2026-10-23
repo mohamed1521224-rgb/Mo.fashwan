@@ -16,11 +16,13 @@
             android:layout_height="match_parent" />
     </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
-    <!-- البانر طبقة عائمة أصغر فوق المحتوى (320×50)، متوسط أفقيًا، والموقع هو من يحدد إظهاره ومكانه -->
+    <!-- Fixed-height overlay, a sibling of SwipeRefreshLayout, never inside its scrolling content.
+         The AdView remains 320x50dp and centered; hiding the host does not change its measurements. -->
     <FrameLayout
         android:id="@+id/ad_container"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_width="match_parent"
+        android:layout_height="50dp"
+        android:visibility="invisible"
         android:elevation="8dp"
         android:layout_gravity="bottom|center_horizontal" />
 

@@ -37,6 +37,7 @@ public class AdsManager {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final AtomicBoolean displayPending = new AtomicBoolean(false);
     private final Runnable sdkReadyCallback = () -> onMain(this::onSdkReady);
+    private final Runnable sdkFailedCallback = () -> onMain(this::onSdkFailed);
     private AdView banner;
     private volatile InterstitialAd interstitial;
     private volatile RewardedAd rewarded;
@@ -58,7 +59,7 @@ public class AdsManager {
         this.activity = activity;
         this.container = container;
         this.enabled = enabled;
-        if (container != null) container.setVisibility(View.GONE);
+        if (container != null) container.setVisibility(View.INVISIBLE);
     }
 
     private static void requireMain() {
@@ -134,7 +135,12 @@ public class AdsManager {
     }
 
     private void initializeSdk() {
-        if (!AdsSdk.initialize(activity.getApplicationContext(), sdkReadyCallback)) preparing = false;
+        if (!AdsSdk.initialize(activity.getApplicationContext(), sdkReadyCallback, sdkFailedCallback)) preparing = false;
+    }
+
+    private void onSdkFailed() {
+        preparing = false;
+        Log.w(TAG, "sdk_initialization_unavailable");
     }
 
     private void onSdkReady() {
@@ -202,9 +208,9 @@ public class AdsManager {
         boolean hidden = AdUi.execute("banner_hide", () -> {
             if (banner != null) {
                 banner.pause();
-                banner.setVisibility(View.GONE);
+                banner.setVisibility(View.INVISIBLE);
             }
-            if (container != null) container.setVisibility(View.GONE);
+            if (container != null) container.setVisibility(View.INVISIBLE);
         });
         if (!hidden) disposeBanner();
     }
@@ -217,7 +223,7 @@ public class AdsManager {
             AdUi.execute("banner_detach", () -> container.removeView(previous));
             AdUi.execute("banner_destroy", previous::destroy);
         }
-        if (container != null) AdUi.execute("banner_container_hide", () -> container.setVisibility(View.GONE));
+        if (container != null) AdUi.execute("banner_container_hide", () -> container.setVisibility(View.INVISIBLE));
     }
 
     public boolean isBannerVisible() {
@@ -440,7 +446,7 @@ public class AdsManager {
         interstitial = null;
         rewarded = null;
         displayPending.set(false);
-        AdsSdk.cancel(sdkReadyCallback);
+        AdsSdk.cancel(activity.getApplicationContext(), sdkReadyCallback);
         main.removeCallbacksAndMessages(null);
         disposeBanner();
     }
