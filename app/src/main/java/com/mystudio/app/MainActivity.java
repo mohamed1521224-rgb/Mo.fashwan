@@ -18,6 +18,9 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.util.Log;
+import android.webkit.RenderProcessGoneDetail;
+import java.util.concurrent.atomic.AtomicBoolean;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
@@ -47,14 +50,16 @@ public class MainActivity extends AppCompatActivity {
     private WebView webView;
     private SwipeRefreshLayout swipe;
     private View splashView;
-    private AdsManager ads;
+    private volatile AdsManager ads;
     private SiteAssets site;
     private boolean splashDone = false;
     private boolean pageLoaded = false;
     private boolean offlineShown = false;
-    private boolean adWasShown = false;
-    private boolean pendingNextLoadInterstitial = false;
-    private String currentUrl = null;
+    private final AtomicBoolean pendingNextLoadInterstitial = new AtomicBoolean(false);
+    private volatile boolean destroyed = false;
+    private boolean syncInFlight = false;
+    private boolean adsPreparationScheduled = false;
+    private final Runnable periodicSync = this::doSync;
     private long splashStart = 0;
     private RemoteConfig remoteConfig;
     private final Handler syncHandler = new Handler(Looper.getMainLooper());
@@ -103,8 +108,11 @@ public class MainActivity extends AppCompatActivity {
         }
 
         remoteConfig = new RemoteConfig(this);
-        startPeriodicSync();
-        webView.loadUrl(remoteConfig.startUrl);
+        if (savedInstanceState == null || webView.restoreState(savedInstanceState) == null) {
+            webView.loadUrl(remoteConfig.startUrl);
+        }
+        Log.i("NativeBuilderWebView", "activity_create webView=" + System.identityHashCode(webView));
+        doSync();
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
@@ -200,7 +208,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 pageLoaded = true;
-                currentUrl = url;
+                Log.i("NativeBuilderWebView", "page_finished webView=" + System.identityHashCode(view));
                 swipe.setRefreshing(false);
                 if (AppConfig.SPLASH_WAIT_FOR_LOAD && !splashDone) {
                     hideSplash();
@@ -208,17 +216,25 @@ public class MainActivity extends AppCompatActivity {
                 if (remoteConfig != null && !remoteConfig.jsCode.isEmpty()) {
                     view.evaluateJavascript(remoteConfig.jsCode, null);
                 }
-                // تهيئة AdMob في الخلفية بعد استقرار الصفحة تماماً — لا تهدّج الواجهة
-                if (ads != null) {
-                    new Handler(Looper.getMainLooper()).postDelayed(ads::prepareAsync, 1200);
+                if (ads != null && !adsPreparationScheduled) {
+                    adsPreparationScheduled = true;
+                    syncHandler.postDelayed(() -> {
+                        if (!destroyed && ads != null) ads.prepareAsync();
+                    }, 1200);
                 }
-                // نمط Median.co: لو الموقع طلب إعلاناً بينياً مؤجلاً، يُعرض الآن بعد استقرار الصفحة.
-                if (pendingNextLoadInterstitial) {
-                    pendingNextLoadInterstitial = false;
-                    if (ads != null && ads.showInterstitial()) {
-                        adWasShown = true;
-                    }
+                // Only an explicit website request arms this existing bridge option.
+                if (pendingNextLoadInterstitial.getAndSet(false) && ads != null) {
+                    ads.showInterstitial();
                 }
+            }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                Log.e("NativeBuilderWebView", "renderer_gone webView="
+                        + System.identityHashCode(view) + " crashed=" + detail.didCrash()
+                        + " priority=" + detail.rendererPriorityAtExit());
+                // A dead renderer cannot retain JavaScript state. Do not disguise it with a reload.
+                return super.onRenderProcessGone(view, detail);
             }
 
             @Override
@@ -367,6 +383,7 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void reload() {
             runOnUiThread(() -> {
+                if (destroyed || webView == null) return;
                 pageLoaded = false;
                 webView.loadUrl(AppConfig.START_URL);
             });
@@ -384,47 +401,30 @@ public class MainActivity extends AppCompatActivity {
 
         @JavascriptInterface
         public boolean isInterstitialReady() {
-            return ads != null && ads.isInterstitialReady();
+            return AdUi.call("bridge_interstitial_ready", () -> !destroyed && ads != null && ads.isInterstitialReady());
         }
 
         @JavascriptInterface
         public boolean showInterstitial() {
-            if (ads == null) {
-                return false;
-            }
-            final boolean[] shown = new boolean[] { false };
-            runOnUiThread(() -> {
-                shown[0] = ads.showInterstitial();
-                if (shown[0]) {
-                    adWasShown = true;
-                }
-            });
-            return shown[0];
+            // AdsManager reserves the request, then guards presentation on the main thread.
+            return AdUi.call("bridge_interstitial_request", () -> !destroyed && ads != null && ads.showInterstitial());
         }
 
         /** نمط Median.co: يطلب عرض الإعلان البيني عند اكتمال تحميل الصفحة التالية (نقطة مستقرة). */
         @JavascriptInterface
         public boolean showInterstitialOnNextPageLoadIfReady() {
-            if (ads == null || !ads.isInterstitialReady()) {
-                return false;
-            }
-            pendingNextLoadInterstitial = true;
-            return true;
+            return AdUi.call("bridge_next_page_request", () -> !destroyed && ads != null
+                    && ads.isInterstitialReady() && pendingNextLoadInterstitial.compareAndSet(false, true));
         }
 
         @JavascriptInterface
         public boolean isRewardedReady() {
-            return ads != null && ads.isRewardedReady();
+            return AdUi.call("bridge_rewarded_ready", () -> !destroyed && ads != null && ads.isRewardedReady());
         }
 
         @JavascriptInterface
         public boolean showRewarded() {
-            if (ads == null) {
-                return false;
-            }
-            final boolean[] shown = new boolean[] { false };
-            runOnUiThread(() -> shown[0] = ads.showRewarded());
-            return shown[0];
+            return AdUi.call("bridge_rewarded_request", () -> !destroyed && ads != null && ads.showRewarded());
         }
 
         @JavascriptInterface
@@ -434,25 +434,21 @@ public class MainActivity extends AppCompatActivity {
 
         @JavascriptInterface
         public void showBannerAt(String position) {
-            runOnUiThread(() -> {
-                if (ads != null) {
-                    ads.showBanner(position);
-                }
+            AdUi.run(MainActivity.this, "bridge_banner_show", () -> {
+                if (!destroyed && ads != null) ads.showBanner(position);
             });
         }
 
         @JavascriptInterface
         public void hideBanner() {
-            runOnUiThread(() -> {
-                if (ads != null) {
-                    ads.hideBanner();
-                }
+            AdUi.run(MainActivity.this, "bridge_banner_hide", () -> {
+                if (!destroyed && ads != null) ads.hideBanner();
             });
         }
 
         @JavascriptInterface
         public boolean isBannerVisible() {
-            return ads != null && ads.isBannerVisible();
+            return AdUi.call("bridge_banner_visible", () -> !destroyed && ads != null && ads.isBannerVisible());
         }
     }
 
@@ -461,55 +457,46 @@ public class MainActivity extends AppCompatActivity {
                 || AppConfig.SYNC_INTERVAL_HOURS <= 0) {
             return;
         }
+        syncHandler.removeCallbacks(periodicSync);
+        if (destroyed) return;
         long intervalMs = AppConfig.SYNC_INTERVAL_HOURS * 3600_000L;
-        syncHandler.postDelayed(this::doSync, intervalMs);
+        syncHandler.postDelayed(periodicSync, intervalMs);
     }
 
     private void doSync() {
-        if (remoteConfig == null) {
-            return;
-        }
-        remoteConfig.sync(changed -> {
-            if (changed && webView != null) {
-                runOnUiThread(() -> webView.loadUrl(remoteConfig.startUrl));
+        if (destroyed || syncInFlight || remoteConfig == null) return;
+        syncInFlight = true;
+        long adGeneration = ads == null ? 0 : ads.getFullScreenGeneration();
+        boolean syncStartedDuringAd = ads != null && ads.isFullScreenShowing();
+        remoteConfig.sync(changed -> runOnUiThread(() -> {
+            syncInFlight = false;
+            if (destroyed) return;
+            // Keep configured periodic URL updates, but never navigate beneath a fullscreen ad.
+            // Updates received during an ad remain cached for the next app launch.
+            if (changed && webView != null && !syncStartedDuringAd
+                    && (ads == null || (!ads.isFullScreenShowing()
+                    && ads.getFullScreenGeneration() == adGeneration))) {
+                webView.loadUrl(remoteConfig.startUrl);
             }
             startPeriodicSync();
-        });
+        }));
     }
 
     @Override
     protected void onPause() {
+        if (ads != null) ads.onPause();
+        if (webView != null) webView.onPause();
+        Log.i("NativeBuilderWebView", "activity_pause webView=" + System.identityHashCode(webView));
         super.onPause();
-        if (webView != null) {
-            webView.onPause();
-        }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (webView != null) {
-            webView.onResume();
-            // بعد إغلاق إعلان AdMob بيني، قد يفقد الـ WebView سياق الرسم (GPU) فيظهر أبيض.
-            // نُعيد بناء سطح الرسم بطريقة غير مدمرة: تبديل الرؤية INVISIBLE→VISIBLE
-            // يجبر نظام العرض على إعادة تركيب الـ WebView دون إعادة تحميل الصفحة،
-            // ودون فقدان حالة JavaScript أو تغيير الـ URL الحالي.
-            if (adWasShown) {
-                adWasShown = false;
-                webView.post(() -> {
-                    if (webView == null) {
-                        return;
-                    }
-                    webView.setVisibility(View.INVISIBLE);
-                    webView.post(() -> {
-                        if (webView != null) {
-                            webView.setVisibility(View.VISIBLE);
-                        }
-                    });
-                });
-            }
-        }
-        doSync();
+        if (webView != null) webView.onResume();
+        if (ads != null) ads.onResume();
+        Log.i("NativeBuilderWebView", "activity_resume webView=" + System.identityHashCode(webView));
+        // No visibility toggles, render-health JavaScript, reload or remote sync on ad return.
     }
 
     @Override
@@ -522,10 +509,18 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        destroyed = true;
+        syncHandler.removeCallbacksAndMessages(null);
+        Log.i("NativeBuilderWebView", "activity_destroy webView=" + System.identityHashCode(webView)
+                + " changingConfigurations=" + isChangingConfigurations());
         if (ads != null) {
             ads.shutdown();
         }
         if (webView != null) {
+            webView.removeJavascriptInterface("AndroidApp");
+            webView.removeJavascriptInterface("AndroidBridge");
+            ViewGroup parent = (ViewGroup) webView.getParent();
+            if (parent != null) parent.removeView(webView);
             webView.destroy();
             webView = null;
         }

@@ -26,10 +26,24 @@
 ## الإعلانات يطلبها الموقع (JS Bridge)
 الموقع هو من يطلب الإعلان، ولا يُعرض أي إعلان بيني تلقائياً:
 - `AndroidApp.isInterstitialReady()` — هل الإعلان البيني جاهز؟
-- `AndroidApp.showInterstitial()` — يعرضه فقط إذا كان جاهزاً ويعيد true/false.
+- `AndroidApp.showInterstitial()` — يطلب عرضه فقط إذا كان جاهزاً؛ true تعني قبول الطلب وإرساله إلى Main Thread، لا ضمان نجاح عرض الإعلان من جوجل. لا ينتظر الجسر نتيجة العرض ولا يحجب JavaScript.
+- `AndroidApp.showInterstitialOnNextPageLoadIfReady()` — الخيار الحالي لطلب العرض عند التحميل التالي، ولا يُفعّل إلا بطلب الموقع.
 - `AndroidApp.isRewardedReady()` / `AndroidApp.showRewarded()` — الإعلان المكافِئ.
 - `AndroidApp.showBanner()` / `AndroidApp.showBannerAt("top"|"bottom")` / `AndroidApp.hideBanner()` — البانر طبقة عائمة فوق المحتوى.
 - `AndroidApp.reload()` / `AndroidApp.toast("...") ` / `AndroidApp.isOnlineNow()`.
+
+## تشخيص دورة AdMob الأصلية على Android
+- يجب توليد المشروع وبناء APK جديد وتثبيته؛ تحديث الاستوديو وحده لا يحدّث APK مثبتاً سابقاً.
+- السجل NativeBuilderAds يفصل consent_begin / consent_complete عن sdk_initialize_begin / sdk_initialize_complete ثم interstitial_load_requested / interstitial_loaded / interstitial_show_requested / interstitial_shown / interstitial_dismissed؛ وبالمثل للإعلان المكافئ.
+- لعزل التهيئة دون تحميل إعلانات: في نسخة تشخيصية أبقِ ads.enabled مفعّلاً وعطّل banner/interstitial/rewarded جميعاً من إعدادات المشروع الحالية، ثم أعد البناء. بعد ذلك فعّل كل نوع منفرداً للمقارنة؛ لا تغيّر منطق الموقع أو استدعاءاته. عدم عرض إعلان لا يعني عدم تحميله مسبقاً.
+- على جهاز Android، استخدم معرّفات Google التجريبية، وانتظر جاهزية الإعلان، ثم اجعل الموقع يطلبه كالمعتاد، وأغلقه وواصل اللعب والتنقل؛ كرر 3 مرات على الأقل. هذه خطوات اختبار مطلوب تنفيذها وليست نتيجة اختبار أجري داخل الاستوديو.
+- يجب أن يظل رقم webView في NativeBuilderWebView ثابتاً خلال activity_pause / activity_resume، وألا يحدث activity_create أو activity_destroy أو page_finished جديد بسبب إغلاق الإعلان فقط. تنقل الموقع المقصود يظل مسموحاً.
+- renderer_gone يسجل إن كان محرك WebView قد تعطل أو قُتل؛ لا يمكن الاحتفاظ بحالة JavaScript داخل محرك مات بالفعل، ولا نعالج ذلك بإخفائه أو إعادة تحميل صامتة.
+- onResume لا يعيد تحميل الصفحة ولا يخفي WebView ولا يشغّل المزامنة. المزامنة الأولية والدورية المُعدّة مسبقاً تبقى؛ إن وصل تغيير رابط أثناء إعلان كامل الشاشة يُحفظ للتشغيل التالي دون نقل الصفحة الحالية.
+- تهيئة SDK مرة واحدة لكل عملية، والموافقة والتحميل والعرض وAdView على Main Thread، مع تفعيل تحسينات Google للعمل الثقيل بالخلفية. لا يوجد WebView Ads API ولا Activity إعلانات مخصصة؛ يستخدم Google SDK واجهته الأصلية.
+- AdUi يمسك RuntimeException في نقطة التنفيذ الفعلية، بما فيها Runnable المؤجل على Main Thread، ويسجل اسم العملية والاستثناء كاملاً في NativeBuilderAds. تُحرّر أعلام التحميل/العرض والتهيئة عند فشل الاستدعاء، ولا توجد إعادة محاولة تلقائية متكررة أو إعادة تحميل للموقع.
+- طلبات البانر المتكررة لا تعيد إضافة AdView أو تطبيق LayoutParams نفسها، ولا تغيّر مساحة WebView. فشل تجهيز البانر ينظف العرض الجزئي بدلاً من ترك طبقة عالقة.
+- try/catch يعالج استثناءات Java في مسار الإعلانات فقط؛ لا يمنع موت عملية Chromium/GPU أو نفاد الذاكرة، ولا يُعد دليلاً أن مشكلة جهاز معيّن قد حُلّت. تأكيد ذلك يتطلب اختبار APK جديد ومراجعة السجل على Android.
 
 ## العمل بدون إنترنت من أول تشغيل
 في وضع التنزيل الموسّع تُسحب الصفحات والموارد العامة المرتبطة أثناء بناء GitHub إلى `app/src/main/assets/site` مباشرة على القرص، بلا سقف 12MB أو 25 صفحة من الاستوديو.
