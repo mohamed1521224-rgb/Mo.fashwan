@@ -22,9 +22,6 @@ import com.google.android.gms.ads.interstitial.InterstitialAd;
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback;
 import com.google.android.gms.ads.rewarded.RewardedAd;
 import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback;
-import com.google.android.ump.ConsentInformation;
-import com.google.android.ump.ConsentRequestParameters;
-import com.google.android.ump.UserMessagingPlatform;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -90,46 +87,7 @@ public class AdsManager {
         preparationRequested = true;
         if (!alive() || !resumed || sdkInitialized || preparing) return;
         preparing = true;
-        Log.i(TAG, "consent_begin");
-        if (!AdUi.execute("consent_request", this::requestConsent)) preparing = false;
-    }
-
-    private void requestConsent() {
-        if (!AppConfig.CONSENT_ENABLED) {
-            initializeSdk();
-            return;
-        }
-        ConsentInformation info = UserMessagingPlatform.getConsentInformation(activity);
-        info.requestConsentInfoUpdate(activity, new ConsentRequestParameters.Builder().build(),
-                () -> onMain(() -> {
-                    if (!alive()) return;
-                    if (!resumed) {
-                        preparing = false;
-                        return;
-                    }
-                    boolean requested = AdUi.execute("consent_form", () ->
-                            UserMessagingPlatform.loadAndShowConsentFormIfRequired(activity,
-                                    error -> onMain(() -> {
-                                        if (error != null) Log.w(TAG, "consent_form_error=" + error.getErrorCode());
-                                        finishConsent(info);
-                                    })));
-                    if (!requested) preparing = false;
-                }),
-                error -> onMain(() -> {
-                    Log.w(TAG, "consent_update_error=" + error.getErrorCode());
-                    finishConsent(info);
-                }));
-    }
-
-    private void finishConsent(ConsentInformation info) {
-        requireMain();
-        if (!alive()) return;
-        if (!info.canRequestAds()) {
-            preparing = false;
-            Log.w(TAG, "consent_blocked: no ad requests permitted");
-            return;
-        }
-        Log.i(TAG, "consent_complete");
+        Log.i(TAG, "sdk_initialization_start");
         initializeSdk();
     }
 
@@ -188,7 +146,7 @@ public class AdsManager {
             FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(width, height, Gravity.CENTER);
             container.addView(banner, params);
 
-            Log.i(TAG, "banner_load_requested thread=" + Thread.currentThread().getName());
+            Log.i(TAG, "banner_load_requested");
             banner.loadAd(new AdRequest.Builder().build());
         });
 
@@ -266,7 +224,7 @@ public class AdsManager {
         requireMain();
         if (!alive() || !sdkInitialized || !AppConfig.INTERSTITIAL_ENABLED || interstitialLoading || interstitial != null) return;
         interstitialLoading = true;
-        Log.i(TAG, "interstitial_load_requested thread=" + Thread.currentThread().getName());
+        Log.i(TAG, "interstitial_load_requested");
         boolean requested = AdUi.execute("interstitial_load", () ->
                 InterstitialAd.load(activity.getApplicationContext(), AppConfig.INTERSTITIAL_ID,
                         new AdRequest.Builder().build(), new InterstitialAdLoadCallback() {
@@ -297,8 +255,7 @@ public class AdsManager {
     }
 
     public boolean isInterstitialReady() {
-        return enabled && resumed && !destroyed && !fullScreenShowing
-                && !displayPending.get() && interstitial != null;
+        return enabled && resumed && !destroyed && !fullScreenShowing && !displayPending.get() && interstitial != null;
     }
 
     public boolean showInterstitial() {
@@ -341,7 +298,7 @@ public class AdsManager {
         requireMain();
         if (!alive() || !sdkInitialized || !AppConfig.REWARDED_ENABLED || rewardedLoading || rewarded != null) return;
         rewardedLoading = true;
-        Log.i(TAG, "rewarded_load_requested thread=" + Thread.currentThread().getName());
+        Log.i(TAG, "rewarded_load_requested");
         boolean requested = AdUi.execute("rewarded_load", () ->
                 RewardedAd.load(activity.getApplicationContext(), AppConfig.REWARDED_ID,
                         new AdRequest.Builder().build(), new RewardedAdLoadCallback() {
@@ -372,8 +329,7 @@ public class AdsManager {
     }
 
     public boolean isRewardedReady() {
-        return enabled && resumed && !destroyed && !fullScreenShowing
-                && !displayPending.get() && rewarded != null;
+        return enabled && resumed && !destroyed && !fullScreenShowing && !displayPending.get() && rewarded != null;
     }
 
     public boolean showRewarded() {
