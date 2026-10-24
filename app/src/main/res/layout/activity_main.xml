@@ -16,8 +16,6 @@
             android:layout_height="match_parent" />
     </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
-    <!-- Fixed-height overlay, a sibling of SwipeRefreshLayout, never inside its scrolling content.
-         The AdView remains 320x50dp and centered; hiding the host does not change its measurements. -->
     <FrameLayout
         android:id="@+id/ad_container"
         android:layout_width="match_parent"
@@ -25,18 +23,5 @@
         android:visibility="invisible"
         android:elevation="8dp"
         android:layout_gravity="bottom|center_horizontal" />
-
-    <Button
-        android:id="@+id/rewarded_button"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|end"
-        android:layout_marginEnd="14dp"
-        android:layout_marginBottom="72dp"
-        android:background="@color/splash_accent"
-        android:paddingHorizontal="16dp"
-        android:text="مشاهدة إعلان"
-        android:textColor="#FFFFFF"
-        android:textSize="12sp" />
 
 </FrameLayout>
