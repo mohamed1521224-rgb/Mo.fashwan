@@ -59,10 +59,18 @@ public class RemoteConfig {
                 conn.disconnect();
 
                 JSONObject json = new JSONObject(sb.toString());
-                String newUrl = json.optString("start_url", startUrl);
-                String newJs = json.optString("js_code", jsCode);
+                String newUrl = json.has("start_url") && !json.isNull("start_url")
+                        ? json.optString("start_url", startUrl).trim()
+                        : startUrl;
+                String newJs = json.has("js_code") && !json.isNull("js_code")
+                        ? json.optString("js_code", jsCode)
+                        : jsCode;
 
-                changed = !newUrl.equals(startUrl);
+                if (newUrl == null || newUrl.isEmpty()) {
+                    newUrl = startUrl;
+                }
+
+                changed = !newUrl.equals(startUrl) || !newJs.equals(jsCode);
                 startUrl = newUrl;
                 jsCode = newJs;
 

@@ -33,8 +33,9 @@ public final class AppConfig {
     public static final String INTERSTITIAL_ID = "ca-app-pub-3940256099942544/1033173712";
     public static final String REWARDED_ID = "ca-app-pub-3940256099942544/5224354917";
 
-    public static final String SYNC_URL = "https://example.com/config.json";
-    public static final int SYNC_INTERVAL_HOURS = 6;
+    // Leave remote sync disabled by default. Configure a real JSON endpoint when needed.
+    public static final String SYNC_URL = null;
+    public static final int SYNC_INTERVAL_HOURS = 0;
 
     private AppConfig() {
     }
